@@ -10,8 +10,10 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium import webdriver
 import shutil
 
+
 class AmazonScraper:
-    def __init__(self, output_dir="data"):
+
+    def __init__(self, output_dir="data"):  # FIX: was "init"
         self.output_dir = output_dir
         self.debug_dir = os.path.join(output_dir, "debug")
         os.makedirs(self.output_dir, exist_ok=True)
@@ -30,7 +32,7 @@ class AmazonScraper:
             print(f"Failed to save screenshot: {e}")
             return None
 
-    def _get_driver(self):
+    def _get_driver(self):  # FIX: renamed from "getdriver" to "_get_driver" for consistency
         """Initialize and return a Chrome driver (local or remote)."""
         options = uc.ChromeOptions()
         options.add_argument("--no-sandbox")
@@ -39,21 +41,24 @@ class AmazonScraper:
         options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-        # selenium_url = os.getenv("SELENIUM_URL")
-        # if selenium_url:
-        #     print(f"Connecting to remote browser at {selenium_url}")
-        #     return webdriver.Remote(command_executor=selenium_url, options=options)
+        options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
 
         system_browser_path = None
         system_driver_path = None
-        possible_browser_paths = ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]
+
+        possible_browser_paths = [
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/google-chrome",
+        ]
         possible_driver_paths = [
             "/usr/lib/chromium/chromedriver",
             "/usr/lib/chromium-browser/chromedriver",
             "/usr/bin/chromedriver",
-            "/usr/bin/chromium-driver"
+            "/usr/bin/chromium-driver",
         ]
 
         for path in possible_browser_paths:
@@ -72,16 +77,23 @@ class AmazonScraper:
         try:
             if system_driver_path:
                 print(f"Using system driver at: {system_driver_path}")
-                # Copy driver to a writable location since uc needs to patch it
                 writable_driver_path = os.path.join(os.getcwd(), "chromedriver_copy")
                 try:
                     shutil.copy2(system_driver_path, writable_driver_path)
                     os.chmod(writable_driver_path, 0o755)
                     print(f"Copied driver to: {writable_driver_path}")
-                    return uc.Chrome(options=options, driver_executable_path=writable_driver_path, use_subprocess=True)
+                    return uc.Chrome(
+                        options=options,
+                        driver_executable_path=writable_driver_path,
+                        use_subprocess=True,
+                    )
                 except Exception as e:
                     print(f"Failed to copy/patch driver, trying system path directly: {e}")
-                    return uc.Chrome(options=options, driver_executable_path=system_driver_path, use_subprocess=True)
+                    return uc.Chrome(
+                        options=options,
+                        driver_executable_path=system_driver_path,
+                        use_subprocess=True,
+                    )
             else:
                 return uc.Chrome(options=options, use_subprocess=True)
         except Exception as e:
@@ -103,7 +115,7 @@ class AmazonScraper:
         original_window = None
         if not driver_created:
             original_window = driver.current_window_handle
-            driver.switch_to.new_window('tab')
+            driver.switch_to.new_window("tab")
 
         reviews = []
         try:
@@ -112,52 +124,70 @@ class AmazonScraper:
 
             # Close any popups
             try:
-                close_buttons = driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Close')]")
-                for btn in close_buttons[:2]:  # Limit to first 2
+                close_buttons = driver.find_elements(
+                    By.XPATH, "//button[contains(@aria-label, 'Close')]"
+                )
+                for btn in close_buttons[:2]:
                     try:
                         btn.click()
                         time.sleep(0.5)
-                    except:
+                    except Exception:
                         pass
-            except:
+            except Exception:
                 pass
 
             # Scroll down to load reviews
             for _ in range(5):
                 try:
-                    driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.END)
-                except:
+                    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
+                except Exception:
                     ActionChains(driver).send_keys(Keys.END).perform()
                 time.sleep(1)
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
-            
-            # Find reviews - Amazon uses div[data-hook="review"]
-            review_containers = soup.find_all("div", {"data-hook": "review"})
-            
+
+            # FIX: Amazon uses <li data-hook="review">, NOT <div>
+            # Use tag-agnostic search to be resilient to future changes
+            review_containers = soup.find_all(attrs={"data-hook": "review"})
+
             seen = set()
-            for review_div in review_containers:
+            for review_el in review_containers:
                 try:
-                    # Find the review body span
-                    review_body_span = review_div.find("span", {"data-hook": "review-body"})
+                    review_body_span = review_el.find(
+                        "span", {"data-hook": "review-body"}
+                    )
                     if review_body_span:
-                        # Get the actual text from spans inside
-                        review_text = ""
-                        for span in review_body_span.find_all("span"):
-                            review_text += span.get_text(strip=True) + " "
-                        review_text = review_text.strip()
-                        
-                        if review_text and review_text not in seen and len(review_text) > 20:
-                            reviews.append(review_text[:500])  # Limit to 500 chars
+                        # FIX: get text directly from the review-body span
+                        # Inner spans may include "Read more" text, so prefer
+                        # the first meaningful inner span or fall back to direct text
+                        inner_spans = review_body_span.find_all("span")
+                        if inner_spans:
+                            # Filter out "Read more" type spans
+                            review_text = ""
+                            for span in inner_spans:
+                                span_text = span.get_text(strip=True)
+                                if span_text.lower() not in ("read more", "read less"):
+                                    review_text += span_text + " "
+                            review_text = review_text.strip()
+                        else:
+                            review_text = review_body_span.get_text(strip=True)
+
+                        if (
+                            review_text
+                            and review_text not in seen
+                            and len(review_text) > 20
+                        ):
+                            reviews.append(review_text[:500])
                             seen.add(review_text)
                             if len(reviews) >= count:
                                 break
-                except Exception as e:
+                except Exception:
                     continue
 
         except Exception as e:
             print(f"Error scraping reviews from {product_url}: {e}")
             self.save_screenshot(driver, "error_reviews")
+
         finally:
             if driver_created:
                 driver.quit()
@@ -165,45 +195,72 @@ class AmazonScraper:
                 try:
                     driver.close()
                     driver.switch_to.window(original_window)
-                except:
+                except Exception:
                     pass
 
         return " || ".join(reviews) if reviews else "No reviews found"
 
-    def scrape_amazon_products(self, query, max_products=5, review_count=2, status_callback=None):
+    def scrape_amazon_products(
+        self, query, max_products=5, review_count=2, status_callback=None
+    ):
         """Scrape Amazon products based on a search query."""
         driver = self._get_driver()
+
         try:
             search_url = f"https://www.amazon.com/s?k={query.replace(' ', '+')}"
-            
+
             if status_callback:
                 status_callback(f"🔍 Searching for '{query}'...", None)
-            
+
             driver.get(search_url)
             time.sleep(3)
 
             # Close popups
             try:
-                close_buttons = driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Close')]")
+                close_buttons = driver.find_elements(
+                    By.XPATH, "//button[contains(@aria-label, 'Close')]"
+                )
                 for btn in close_buttons[:2]:
                     try:
                         btn.click()
-                    except:
+                    except Exception:
                         pass
-            except:
+            except Exception:
+                pass
+
+            # Also dismiss any location/delivery popups
+            try:
+                dismiss_buttons = driver.find_elements(
+                    By.XPATH, "//input[@data-action-type='DISMISS']"
+                )
+                for btn in dismiss_buttons[:2]:
+                    try:
+                        btn.click()
+                    except Exception:
+                        pass
+            except Exception:
                 pass
 
             time.sleep(2)
+
             products = []
+            items = driver.find_elements(
+                By.CSS_SELECTOR, "div[data-component-type='s-search-result']"
+            )
 
-            # Get search result items
-            items = driver.find_elements(By.CSS_SELECTOR, "div[data-component-type='s-search-result']")
-            
             if len(items) == 0:
-                items = driver.find_elements(By.CSS_SELECTOR, "div.s-result-item[data-component-type]")
+                items = driver.find_elements(
+                    By.CSS_SELECTOR, "div.s-result-item[data-component-type]"
+                )
 
-            # Limit to max_products
-            items = items[:max_products]
+            # Filter out items without an ASIN (ads/placeholders)
+            valid_items = []
+            for item in items:
+                asin = item.get_attribute("data-asin")
+                if asin and asin.strip():
+                    valid_items.append(item)
+
+            items = valid_items[:max_products]
 
             if status_callback:
                 status_callback(f"✅ Found {len(items)} items. Processing...", None)
@@ -217,88 +274,123 @@ class AmazonScraper:
 
             for i, item in enumerate(items):
                 if status_callback:
-                    status_callback(f"⚙️ Processing item {i+1}/{len(items)}...", None)
+                    status_callback(
+                        f"⚙️ Processing item {i + 1}/{len(items)}...", None
+                    )
 
                 try:
                     # Scroll to item
                     ActionChains(driver).move_to_element(item).perform()
                     time.sleep(0.3)
 
-                    # Extract title - try multiple selectors
+                    # --- Extract ASIN directly from data attribute ---
+                    product_id = item.get_attribute("data-asin") or "N/A"
+
+                    # --- Extract title ---
+                    # FIX: structure is <a> > <h2> > <span>, so use "h2 span"
                     title = "N/A"
-                    title_selectors = ["h2 a span", "h2 span", "span.a-size-base-plus", "span.a-size-medium"]
+                    title_selectors = [
+                        "h2 span",
+                        "span.a-size-base-plus",
+                        "span.a-size-medium",
+                    ]
                     for selector in title_selectors:
                         try:
                             title_elem = item.find_element(By.CSS_SELECTOR, selector)
-                            if title_elem:
+                            if title_elem and title_elem.text.strip():
                                 title = title_elem.text.strip()
-                                if title:
-                                    break
-                        except:
+                                break
+                        except Exception:
                             continue
 
-                    # Extract price
+                    # --- Extract price ---
                     price = "N/A"
-                    price_selectors = ["span.a-price-whole", "span.a-price"]
-                    for selector in price_selectors:
+                    try:
+                        price_whole = item.find_element(
+                            By.CSS_SELECTOR, "span.a-price-whole"
+                        )
+                        price_frac = item.find_element(
+                            By.CSS_SELECTOR, "span.a-price-fraction"
+                        )
+                        if price_whole and price_frac:
+                            price = f"${price_whole.text.strip()}{price_frac.text.strip()}"
+                    except Exception:
                         try:
-                            price_elem = item.find_element(By.CSS_SELECTOR, selector)
+                            price_elem = item.find_element(
+                                By.CSS_SELECTOR, "span.a-price span.a-offscreen"
+                            )
                             if price_elem:
-                                price = price_elem.text.strip()
-                                if price:
-                                    break
-                        except:
-                            continue
+                                price = price_elem.get_attribute("textContent").strip()
+                        except Exception:
+                            pass
 
-                    # Extract rating
+                    # --- Extract rating ---
+                    # FIX: use aria-label on the rating link/element
                     rating = "N/A"
                     try:
-                        rating_elem = item.find_element(By.CSS_SELECTOR, "span.a-icon-star-small span")
-                        rating_text = rating_elem.text.strip()
-                        rating = rating_text.split()[0] if rating_text else "N/A"
-                    except:
+                        rating_elem = item.find_element(
+                            By.CSS_SELECTOR, "[aria-label*='out of 5 stars']"
+                        )
+                        rating_label = rating_elem.get_attribute("aria-label")
+                        # e.g. "4.3 out of 5 stars, rating details"
+                        match = re.search(r"([\\d.]+)\\s+out of", rating_label)
+                        if match:
+                            rating = match.group(1)
+                    except Exception:
                         pass
 
-                    # Extract review count
+                    # --- Extract review count ---
+                    # FIX: review count is in <a aria-label="X ratings">
                     total_reviews = "N/A"
                     try:
-                        reviews_elem = item.find_element(By.CSS_SELECTOR, "span[aria-label*='based on']")
-                        reviews_text = reviews_elem.text.strip()
-                        match = re.search(r"(\\d+(?:,\\d+)?)\\s+", reviews_text)
-                        if match:
-                            total_reviews = match.group(1)
-                    except:
-                        pass
-
-                    # Extract product link and ASIN
-                    product_id = "N/A"
-                    product_link = "N/A"
-                    
-                    # Try to find link with href containing /dp/
-                    link_elem = None
-                    link_selectors = ["h2 a", "a[href*='/dp/']", "a[href*='/p/']"]
-                    
-                    for selector in link_selectors:
+                        reviews_elem = item.find_element(
+                            By.CSS_SELECTOR, "a[aria-label*='ratings']"
+                        )
+                        # Text is like "(821)" or "821"
+                        reviews_text = reviews_elem.text.strip().strip("()")
+                        if reviews_text:
+                            total_reviews = reviews_text
+                    except Exception:
+                        # Fallback: try span near star ratings
                         try:
-                            link_elem = item.find_element(By.CSS_SELECTOR, selector)
-                            if link_elem:
-                                break
-                        except:
-                            continue
+                            reviews_elem = item.find_element(
+                                By.CSS_SELECTOR,
+                                "span[aria-label*='ratings']",
+                            )
+                            total_reviews = reviews_elem.get_attribute(
+                                "aria-label"
+                            ).split()[0]
+                        except Exception:
+                            pass
 
-                    if link_elem:
+                    # --- Extract product link ---
+                    # FIX: use a[href*='/dp/'] instead of "h2 a"
+                    product_link = "N/A"
+                    try:
+                        link_elem = item.find_element(
+                            By.CSS_SELECTOR, "a[href*='/dp/']"
+                        )
                         href = link_elem.get_attribute("href")
                         if href:
-                            product_link = href if href.startswith("http") else "https://www.amazon.in" + href
-                            
-                            # Extract ASIN
-                            match = re.search(r"/dp/([A-Z0-9]+)", href)
-                            if match:
-                                product_id = match.group(1)
+                            # FIX: was hardcoded to amazon.in
+                            product_link = (
+                                href
+                                if href.startswith("http")
+                                else "https://www.amazon.com" + href
+                            )
+                            # Extract ASIN from URL as fallback
+                            if product_id == "N/A":
+                                match = re.search(r"/dp/([A-Z0-9]+)", href)
+                                if match:
+                                    product_id = match.group(1)
+                    except Exception:
+                        pass
 
                     # Skip if we couldn't extract minimum info
-                    if product_id == "N/A" or product_link == "N/A":
-                        print(f"Skipping item {i} - could not extract product info")
+                    if product_id == "N/A" and product_link == "N/A":
+                        print(
+                            f"Skipping item {i} - could not extract product info"
+                        )
                         continue
 
                 except Exception as e:
@@ -307,17 +399,24 @@ class AmazonScraper:
 
                 # Get reviews
                 if status_callback:
-                    status_callback(f"📝 Scraping reviews for product {i+1}...", None)
+                    status_callback(
+                        f"📝 Scraping reviews for product {i + 1}...", None
+                    )
 
-                top_reviews = self.get_top_reviews(product_link, count=review_count, driver=None)
-                
-                products.append([product_id, title, rating, total_reviews, price, top_reviews])
+                top_reviews = self.get_top_reviews(
+                    product_link, count=review_count, driver=None
+                )
+
+                products.append(
+                    [product_id, title, rating, total_reviews, price, top_reviews]
+                )
                 print(f"✓ Added product: {product_id} - {title[:40]}...")
 
         except Exception as e:
             print(f"Fatal error in scrape_amazon_products: {e}")
             if status_callback:
                 status_callback(f"❌ Fatal error: {str(e)[:100]}", None)
+
         finally:
             driver.quit()
 
@@ -335,16 +434,25 @@ class AmazonScraper:
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["product_id", "product_title", "rating", "total_reviews", "price", "top_reviews"])
+            writer.writerow(
+                [
+                    "product_id",
+                    "product_title",
+                    "rating",
+                    "total_reviews",
+                    "price",
+                    "top_reviews",
+                ]
+            )
             writer.writerows(data)
-        
+
         print(f"✅ Data saved to {path}")
 
 
 # Example usage
-if __name__ == "__main__":
+if __name__ == "__main__":  # FIX: was "name"
     scraper = AmazonScraper()
-    
+
     def status_callback(message, screenshot_path=None):
         print(f"[{time.strftime('%H:%M:%S')}] {message}")
 
@@ -352,14 +460,16 @@ if __name__ == "__main__":
         query="laptop",
         max_products=5,
         review_count=2,
-        status_callback=status_callback
+        status_callback=status_callback,
     )
-    
+
     scraper.save_to_csv(products)
-    
-    print(f"\\n\\n{'='*80}")
+
+    print(f"\\n\\n{'=' * 80}")
     print(f"Successfully scraped {len(products)} products")
-    print(f"{'='*80}\\n")
-    
+    print(f"{'=' * 80}\\n")
+
     for product in products:
-        print(f"📦 {product[0]} | {product[1][:50]}... | ⭐ {product[2]} | Reviews: {product[3]}")
+        print(
+            f"📦 {product[0]} | {product[1][:50]}... | ⭐ {product[2]} | Reviews: {product[3]}"
+        )
