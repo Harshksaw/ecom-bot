@@ -8,3 +8,8 @@ dependencies = []
 
 [tool.setuptools]
 packages = []
+
+[tool.uv.workspace]
+members = [
+    "ecom",
+]

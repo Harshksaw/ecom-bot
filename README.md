@@ -30,7 +30,7 @@ uv python list
 
 ### Create virtual environment
 ```bash
-uv venv env --python 3.12
+uv venv env --python 3.10
 ```
 
 ### Activate virtual environment
