@@ -6,6 +6,8 @@ services:
       - "8501:8501"
     volumes:
       - .:/app
+    env_file:
+      - .env
     environment:
       - SELENIUM_URL=http://browser:4444
     depends_on:

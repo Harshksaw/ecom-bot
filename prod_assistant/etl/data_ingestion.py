@@ -63,6 +63,9 @@ class DataIngestion:
 
         if not expected_columns.issubset(set(df.columns)):
             raise ValueError(f"CSV must contain columns: {expected_columns}")
+        
+        # Replace NaN with None for JSON compliance
+        df = df.astype(object).where(pd.notnull(df), None)
 
         return df
 
