@@ -8,14 +8,13 @@ from dotenv import load_dotenv
 
 
 
-class Retiever:
+class Retriever:
     def __init__(self):
-        
+        self._load_env_variables()
         self.model_loader=ModelLoader()
         self.config = load_config()
-        self._load_env_variables()
         self.vstore = None
-        self.retiever = None
+        self.retriever = None
 
     def _load_env_variables(self):
         load_dotenv()
@@ -32,37 +31,39 @@ class Retiever:
         self.db_keyspace = os.getenv("ASTRA_DB_KEYSPACE")
 
 
-    def load_retiever(self):
+    def load_retriever(self):
         """
         Load the retriever
         """
         if not self.vstore:
             collection_name = self.config["astra_db"]["collection_name"]
+            embedding = self.model_loader.load_embeddings()
             self.vstore = AstraDBVectorStore(
                 api_endpoint=self.db_api_endpoint,
                 collection_name=collection_name,
-                application_token=self.db_application_token,
-                keyspace=self.db_keyspace,
+                token=self.db_application_token,
+                namespace=self.db_keyspace,
+                embedding=embedding,
             )
 
 
         if not self.retriever:
             top_k = self.config["retriever"]["top_k"] if "retriever" in self.config else 3
-            retriever = self.vstore.as_retriever(search_kwargs={"k": top_k})
+            self.retriever = self.vstore.as_retriever(search_kwargs={"k": top_k})
 
-        return retriever
+        return self.retriever
 
-    def call_retriever(self):
-        retriever = self.load_retiever()
-        output = retriever.invoke()
+    def call_retriever(self, query):
+        retriever = self.load_retriever()
+        output = retriever.invoke(query)
         return output
 
 
 
 if __name__ == "__main__":
-    retirever_obj = Retiever()
+    retriever_obj = Retriever()
     user_query = "Can you suggest a good budget laptop?"
-    results = retiriever_obj.call_retriever(user_query)
+    results = retriever_obj.call_retriever(user_query)
 
     for idx, doc in enumerate(results,1):
         print(f"{idx + 1}. {doc.page_content}")
