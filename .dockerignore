@@ -1,0 +1,9 @@
+env/
+.git/
+logs/
+data/
+notebook/
+ecom_bot.egg-info/
+__pycache__/
+*.pyc
+.env

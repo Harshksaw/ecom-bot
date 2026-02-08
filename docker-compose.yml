@@ -1,0 +1,29 @@
+services:
+  app:
+    build: .
+    image: ecom-bot-app
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - SELENIUM_URL=http://browser:4444
+    depends_on:
+      - browser
+    networks:
+      - scraping-net
+
+  browser:
+    image: seleniarm/standalone-chromium:latest
+    ports:
+      - "4444:4444"
+      - "7900:7900"
+    shm_size: "2g"
+    networks:
+      - scraping-net
+
+networks:
+  scraping-net:
+    driver: bridge
