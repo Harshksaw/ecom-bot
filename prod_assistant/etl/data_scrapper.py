@@ -2,6 +2,7 @@ import csv
 import time
 import re
 import os
+import random
 from bs4 import BeautifulSoup
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -9,6 +10,36 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium import webdriver
 import shutil
+
+# --- Anti-detection: User-Agent rotation pool ---
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
+]
+
+# --- Anti-detection: JS stealth script to mask automation ---
+STEALTH_JS = """
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    window.chrome = { runtime: {} };
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5]
+    });
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+    });
+    const originalQuery = window.navigator.permissions.query;
+    window.navigator.permissions.query = (parameters) => (
+        parameters.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : originalQuery(parameters)
+    );
+"""
 
 
 class AmazonScraper:
@@ -41,10 +72,11 @@ class AmazonScraper:
         options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
-        options.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
+        # Anti-detection: rotate user-agent on every driver creation
+        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
+        # Anti-detection: disable automation info bars
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-extensions")
 
         system_browser_path = None
         system_driver_path = None
@@ -82,23 +114,43 @@ class AmazonScraper:
                     shutil.copy2(system_driver_path, writable_driver_path)
                     os.chmod(writable_driver_path, 0o755)
                     print(f"Copied driver to: {writable_driver_path}")
-                    return uc.Chrome(
+                    driver = uc.Chrome(
                         options=options,
                         driver_executable_path=writable_driver_path,
                         use_subprocess=True,
                     )
+                    self._apply_stealth(driver)
+                    return driver
                 except Exception as e:
                     print(f"Failed to copy/patch driver, trying system path directly: {e}")
-                    return uc.Chrome(
+                    driver = uc.Chrome(
                         options=options,
                         driver_executable_path=system_driver_path,
                         use_subprocess=True,
                     )
+                    self._apply_stealth(driver)
+                    return driver
             else:
-                return uc.Chrome(options=options, use_subprocess=True)
+                driver = uc.Chrome(options=options, use_subprocess=True)
+                self._apply_stealth(driver)
+                return driver
         except Exception as e:
             print(f"Failed to initialize Chrome: {e}")
             raise
+
+    def _apply_stealth(self, driver):
+        """Apply JS stealth patches to hide automation signals."""
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": STEALTH_JS
+            })
+        except Exception as e:
+            print(f"⚠️ Could not apply stealth JS (non-fatal): {e}")
+
+    def _random_sleep(self, min_sec=2, max_sec=6):
+        """Sleep for a random duration to mimic human behavior."""
+        duration = random.uniform(min_sec, max_sec)
+        time.sleep(duration)
 
     def get_top_reviews(self, product_url, count=2, driver=None):
         """Get the top reviews for a product."""
@@ -120,7 +172,7 @@ class AmazonScraper:
         reviews = []
         try:
             driver.get(product_url)
-            time.sleep(4)
+            self._random_sleep(3, 7)  # Anti-detection: randomized delay
 
             # Close any popups
             try:
@@ -136,13 +188,13 @@ class AmazonScraper:
             except Exception:
                 pass
 
-            # Scroll down to load reviews
+            # Scroll down to load reviews (with human-like random pauses)
             for _ in range(5):
                 try:
                     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
                 except Exception:
                     ActionChains(driver).send_keys(Keys.END).perform()
-                time.sleep(1)
+                self._random_sleep(0.8, 2.0)
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
 
@@ -213,7 +265,7 @@ class AmazonScraper:
                 status_callback(f"🔍 Searching for '{query}'...", None)
 
             driver.get(search_url)
-            time.sleep(3)
+            self._random_sleep(3, 7)  # Anti-detection: randomized delay
 
             # Close popups
             try:
@@ -241,7 +293,7 @@ class AmazonScraper:
             except Exception:
                 pass
 
-            time.sleep(2)
+            self._random_sleep(2, 5)  # Anti-detection: randomized delay
 
             products = []
             items = driver.find_elements(
@@ -281,7 +333,7 @@ class AmazonScraper:
                 try:
                     # Scroll to item
                     ActionChains(driver).move_to_element(item).perform()
-                    time.sleep(0.3)
+                    self._random_sleep(0.3, 1.0)
 
                     # --- Extract ASIN directly from data attribute ---
                     product_id = item.get_attribute("data-asin") or "N/A"
@@ -411,6 +463,35 @@ class AmazonScraper:
                     [product_id, title, rating, total_reviews, price, top_reviews]
                 )
                 print(f"✓ Added product: {product_id} - {title[:40]}...")
+
+                # --- Anti-detection: cool-down every 3 products ---
+                if (i + 1) % 3 == 0 and (i + 1) < len(items):
+                    cool_down = random.uniform(15, 30)
+                    if status_callback:
+                        status_callback(f"⏳ Cooling down for {cool_down:.0f}s to avoid detection...", None)
+                    print(f"⏳ Cooling down for {cool_down:.0f}s...")
+                    time.sleep(cool_down)
+
+                # --- Anti-detection: restart browser every 5 products ---
+                if (i + 1) % 5 == 0 and (i + 1) < len(items):
+                    print("🔄 Restarting browser to reset fingerprint...")
+                    if status_callback:
+                        status_callback("🔄 Restarting browser session...", None)
+                    driver.quit()
+                    self._random_sleep(5, 12)
+                    driver = self._get_driver()
+                    driver.get(search_url)
+                    self._random_sleep(3, 6)
+                    # Re-find items after browser restart
+                    items = driver.find_elements(
+                        By.CSS_SELECTOR, "div[data-component-type='s-search-result']"
+                    )
+                    valid_items = []
+                    for it in items:
+                        asin = it.get_attribute("data-asin")
+                        if asin and asin.strip():
+                            valid_items.append(it)
+                    items = valid_items[:max_products]
 
         except Exception as e:
             print(f"Fatal error in scrape_amazon_products: {e}")

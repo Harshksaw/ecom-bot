@@ -7,10 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from workflow.agentic_workflow_with_mcp_websearch import AgenticRAG
+from prod_assistant.utils.astra_keepalive import start_keepalive
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+@app.on_event("startup")
+def on_startup():
+    start_keepalive()
 
 app.add_middleware(
     CORSMiddleware,
