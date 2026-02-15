@@ -49,7 +49,12 @@ class Retriever:
 
         if not self.retriever:
             top_k = self.config["retriever"]["top_k"] if "retriever" in self.config else 3
-            self.retriever = self.vstore.as_retriever(search_kwargs={"k": top_k})
+            self.retriever = self.vstore.as_retriever(
+                search_type="mmr",
+                search_kwargs={"k": top_k, "fetch_k": 20,
+                "lambda_mult": 0.7,
+                "score_threshold": 0.3
+                })
 
         return self.retriever
 
