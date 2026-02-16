@@ -84,8 +84,33 @@ class Retriever:
 if __name__ == "__main__":
     retriever_obj = Retriever()
     user_query = "Can you suggest a good budget laptop?"
-    results = retriever_obj.call_retriever(user_query)
+    retrieved_obj =  Retriever()
+    retrieved_docs = retriever_obj.call_retriever(user_query)
 
-    for idx, doc in enumerate(results,1):
-        print(f"{idx + 1}. {doc.page_content}")
-    print(results)
+
+    def _format_docs(docs: List[Document]) -> str:
+
+        if not docs:
+            return "No relevant documents found"
+
+            formatted_chunks = []
+            for d in docs:
+                meta = d.metadata or {}
+                formatted = {
+                    f"Title: {meta.get('title', 'N/A')}",
+                    f"Category: {meta.get('category', 'N/A')}",
+                    f"Price: {meta.get('price', 'N/A')}",
+                    f"Description: {meta.get('description', 'N/A')}",
+                    f"Content: {d.page_content.strinp()}"
+                }
+                formatted_chunks.append(formatted)
+            return "\n\n---\n\n".join(formatted_chunks)
+                 
+
+        retrieved_contexts = [_format_docs(doc) for doc in retrieved_docs]
+        context_score = evaluate_context_precision(query, response,retrieved_contexts)
+        relevancy_score = evaluate_response_relevancy(query , response , retrieved_contexts)
+
+        print(f"Context Precision: {context_score}")
+        print(f"Response Relevancy: {relevancy_score}")
+        return retrieved_contexts
