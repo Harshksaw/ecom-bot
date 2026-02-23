@@ -1,60 +1,56 @@
 
 import streamlit as st
-from prod_assistant.etl.data_scrapper import AmazonScraper
 from prod_assistant.etl.data_ingestion import DataIngestion
+from prod_assistant.etl.data_scrapper import BooksToScrapeScraper
 import os
 
-amazon_scraper = AmazonScraper()
+scraper = BooksToScrapeScraper()
 output_path = "data/product_reviews.csv"
-st.title("📦 Product Review Scraper")
 
-if "product_inputs" not in st.session_state:
-    st.session_state.product_inputs = [""]
+st.title("📚 Books to Scrape (Educational)")
+st.info("ℹ️ Scraping from **books.toscrape.com** - a safe sandbox for testing.")
 
-def add_product_input():
-    st.session_state.product_inputs.append("")
+# Fetch categories on load
+if "categories" not in st.session_state:
+    with st.spinner("Fetching categories..."):
+        cats = scraper.get_categories()
+        st.session_state.categories = [c["name"] for c in cats]
 
-st.subheader("📝 Optional Product Description")
-product_description = st.text_area("Enter product description (used as an extra search keyword):")
+selected_category = st.selectbox(
+    "Select a Category to Scrape", 
+    ["All"] + st.session_state.categories if "categories" in st.session_state else []
+)
 
-st.subheader("🛒 Product Names")
-updated_inputs = []
-for i, val in enumerate(st.session_state.product_inputs):
-    input_val = st.text_input(f"Product {i+1}", value=val, key=f"product_{i}")
-    updated_inputs.append(input_val)
-st.session_state.product_inputs = updated_inputs
-
-st.button("➕ Add Another Product", on_click=add_product_input)
-
-max_products = st.number_input("How many products per search?", min_value=1, max_value=10, value=1)
-review_count = st.number_input("How many reviews per product?", min_value=1, max_value=10, value=2)
+max_books = st.slider("How many books to scrape?", min_value=1, max_value=50, value=5)
 
 if st.button("🚀 Start Scraping"):
-    product_inputs = [p.strip() for p in st.session_state.product_inputs if p.strip()]
-    if product_description.strip():
-        product_inputs.append(product_description.strip())
-
-    if not product_inputs:
-        st.warning("⚠️ Please enter at least one product name or a product description.")
+    if not selected_category:
+        st.warning("⚠️ Please select a category.")
     else:
-        final_data = []
-        for query in product_inputs:
-            st.write(f"🔍 Searching for: {query}")
-            results = amazon_scraper.scrape_amazon_products(query, max_products=max_products, review_count=review_count)
-            final_data.extend(results)
+        st.write(f"🔍 Scraping category: **{selected_category}**")
+        
+        # Scraper callback to update UI
+        status_placeholder = st.empty()
+        def status_callback(msg, _):
+            status_placeholder.info(msg)
+            
+        if selected_category == "All":
+             # iterating all categories logic would go here, for now just show warning
+             st.warning("All categories scraping not fully implemented in UI demo. Please pick a specific category.")
+             books = []
+        else:
+            books = scraper.scrape_category(selected_category, max_books=max_books, status_callback=status_callback)
+        
+        if books:
+            scraper.save_to_csv(books, output_path)
+            st.session_state["scraped_data"] = books
+            
+            st.success(f"✅ Scraped {len(books)} books!")
+            st.dataframe(books)
+            st.download_button("📥 Download CSV", data=open(output_path, "rb"), file_name="books_data.csv")
+        else:
+            st.error("❌ No books found or error occurred.")
 
-        unique_products = {}
-        for row in final_data:
-            if row[1] not in unique_products:
-                unique_products[row[1]] = row
-
-        final_data = list(unique_products.values())
-        st.session_state["scraped_data"] = final_data  # store in session
-        amazon_scraper.save_to_csv(final_data, output_path)
-        st.success("✅ Data saved to `data/product_reviews.csv`")
-        st.download_button("📥 Download CSV", data=open(output_path, "rb"), file_name="product_reviews.csv")
-
-# This stays OUTSIDE "if st.button('Start Scraping')"
 if "scraped_data" in st.session_state and st.button("🧠 Store in Vector DB (AstraDB)"):
     with st.spinner("📡 Initializing ingestion pipeline..."):
         try:

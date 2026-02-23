@@ -6,7 +6,8 @@ from  prod_assistant.utils.config_loader import load_config
 from  prod_assistant.utils.model_loader import ModelLoader
 from dotenv import load_dotenv
 
-
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainFilter
 
 class Retriever:
     def __init__(self):
@@ -49,7 +50,27 @@ class Retriever:
 
         if not self.retriever:
             top_k = self.config["retriever"]["top_k"] if "retriever" in self.config else 3
-            self.retriever = self.vstore.as_retriever(search_kwargs={"k": top_k})
+            mmr_retriever = self.vstore.as_retriever(
+                search_type="mmr",
+                search_kwargs={"k": top_k, "fetch_k": 20,
+                "lambda_mult": 0.7,
+                "score_threshold": 0.3
+                })
+            print("MMR Retriever loaded")
+
+            llm = self.model_loader.load_llm()
+            print("LLM loaded")
+
+            compressor = LLMChainFilter.from_llm(llm)
+            print("Compressor loaded")
+
+            self.retriever = ContextualCompressionRetriever(
+                base_retriever=mmr_retriever,
+                base_compressor=compressor
+            )
+
+            return self.retriever
+
 
         return self.retriever
 
@@ -63,8 +84,33 @@ class Retriever:
 if __name__ == "__main__":
     retriever_obj = Retriever()
     user_query = "Can you suggest a good budget laptop?"
-    results = retriever_obj.call_retriever(user_query)
+    retrieved_obj =  Retriever()
+    retrieved_docs = retriever_obj.call_retriever(user_query)
 
-    for idx, doc in enumerate(results,1):
-        print(f"{idx + 1}. {doc.page_content}")
-    print(results)
+
+    def _format_docs(docs: List[Document]) -> str:
+
+        if not docs:
+            return "No relevant documents found"
+
+            formatted_chunks = []
+            for d in docs:
+                meta = d.metadata or {}
+                formatted = {
+                    f"Title: {meta.get('title', 'N/A')}",
+                    f"Category: {meta.get('category', 'N/A')}",
+                    f"Price: {meta.get('price', 'N/A')}",
+                    f"Description: {meta.get('description', 'N/A')}",
+                    f"Content: {d.page_content.strinp()}"
+                }
+                formatted_chunks.append(formatted)
+            return "\n\n---\n\n".join(formatted_chunks)
+                 
+
+        retrieved_contexts = [_format_docs(doc) for doc in retrieved_docs]
+        context_score = evaluate_context_precision(query, response,retrieved_contexts)
+        relevancy_score = evaluate_response_relevancy(query , response , retrieved_contexts)
+
+        print(f"Context Precision: {context_score}")
+        print(f"Response Relevancy: {relevancy_score}")
+        return retrieved_contexts

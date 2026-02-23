@@ -24,3 +24,4 @@ langchain-openai==0.3.32
 jupyter
 ipykernel
 -e .
+requests
