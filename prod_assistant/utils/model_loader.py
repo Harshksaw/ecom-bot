@@ -67,16 +67,13 @@ class ModelLoader:
             raise ProductAssistantException("Failed to load embedding model", sys)
 
 
-    def load_llm(self):
+    def _build_llm(self, provider_key: str):
         """
-        Load and return the configured LLM model.
+        Instantiate a single LLM from config. Returns None if API key is missing.
         """
         llm_block = self.config["llm"]
-        provider_key = os.getenv("LLM_PROVIDER", "openai")
-
         if provider_key not in llm_block:
-            log.error("LLM provider not found in config", provider=provider_key)
-            raise ValueError(f"LLM provider '{provider_key}' not found in config")
+            return None
 
         llm_config = llm_block[provider_key]
         provider = llm_config.get("provider")
@@ -84,33 +81,76 @@ class ModelLoader:
         temperature = llm_config.get("temperature", 0.2)
         max_tokens = llm_config.get("max_output_tokens", 2048)
 
-        log.info("Loading LLM", provider=provider, model=model_name)
-
         if provider == "google":
+            api_key = self.api_key_mgr.get("GOOGLE_API_KEY")
+            if not api_key:
+                log.warning("Skipping Google LLM — GOOGLE_API_KEY missing")
+                return None
             return ChatGoogleGenerativeAI(
                 model=model_name,
-                google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),
+                google_api_key=api_key,
                 temperature=temperature,
                 max_output_tokens=max_tokens
             )
 
         elif provider == "groq":
+            api_key = self.api_key_mgr.get("GROQ_API_KEY")
+            if not api_key:
+                log.warning("Skipping Groq LLM — GROQ_API_KEY missing")
+                return None
             return ChatGroq(
                 model=model_name,
-                api_key=self.api_key_mgr.get("GROQ_API_KEY"), #type: ignore
+                api_key=api_key,  # type: ignore
                 temperature=temperature,
             )
 
         elif provider == "openai":
+            api_key = self.api_key_mgr.get("OPENAI_API_KEY")
+            if not api_key:
+                log.warning("Skipping OpenAI LLM — OPENAI_API_KEY missing")
+                return None
             return ChatOpenAI(
                 model=model_name,
-                api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
+                api_key=api_key,
                 temperature=temperature
             )
 
         else:
-            log.error("Unsupported LLM provider", provider=provider)
-            raise ValueError(f"Unsupported LLM provider: {provider}")
+            log.warning("Unsupported LLM provider, skipping", provider=provider)
+            return None
+
+    def load_llm(self):
+        """
+        Load the primary LLM (from LLM_PROVIDER env var) with automatic
+        fallback to all other configured providers in config order.
+        """
+        llm_block = self.config["llm"]
+        primary_key = os.getenv("LLM_PROVIDER", "openai")
+
+        # Build primary first
+        primary = self._build_llm(primary_key)
+        if primary is None:
+            log.error("Primary LLM could not be loaded", provider=primary_key)
+            raise ValueError(f"Primary LLM provider '{primary_key}' failed to load — check API key and config")
+
+        log.info("Primary LLM loaded", provider=primary_key)
+
+        # Build fallbacks from remaining providers in config order
+        fallbacks = []
+        for key in llm_block:
+            if key == primary_key:
+                continue
+            llm = self._build_llm(key)
+            if llm is not None:
+                fallbacks.append(llm)
+                log.info("Fallback LLM registered", provider=key)
+
+        if not fallbacks:
+            log.warning("No fallback LLMs available — running with primary only")
+            return primary
+
+        log.info("LLM chain ready", primary=primary_key, fallbacks=[k for k in llm_block if k != primary_key])
+        return primary.with_fallbacks(fallbacks)
 
 
 if __name__ == "__main__":
