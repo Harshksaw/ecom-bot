@@ -20,6 +20,8 @@ class ApiKeyManager:
             "ASTRA_DB_API_ENDPOINT": os.getenv("ASTRA_DB_API_ENDPOINT"),
             "ASTRA_DB_APPLICATION_TOKEN": os.getenv("ASTRA_DB_APPLICATION_TOKEN"),
             "ASTRA_DB_KEYSPACE": os.getenv("ASTRA_DB_KEYSPACE"),
+            "RAPIDAPI_KEY": os.getenv("RAPIDAPI_KEY"),
+            "BESTBUY_API_KEY": os.getenv("BESTBUY_API_KEY"),
         }
 
         # Just log loaded keys (don't print actual values)
