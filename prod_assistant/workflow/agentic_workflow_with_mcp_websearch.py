@@ -11,6 +11,7 @@ from retriever.retrieval import Retriever
 from utils.model_loader import ModelLoader
 from evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from etl.api_ingestion import APIIngestionPipeline
 import asyncio
 
 class AgenticRAG:
@@ -18,6 +19,7 @@ class AgenticRAG:
 
     class AgentState(TypedDict):
         messages: Annotated[Sequence[BaseMessage], add_messages]
+        source: str
 
     # ---------- Initialization ----------
     def __init__(self):
@@ -25,6 +27,7 @@ class AgenticRAG:
         self.model_loader = ModelLoader()
         self.llm = self.model_loader.load_llm()
         self.checkpointer = MemorySaver()
+        self.ingestion_pipeline = APIIngestionPipeline()
 
         # Initialize MCP client
         self.mcp_client = MultiServerMCPClient(
@@ -72,6 +75,13 @@ class AgenticRAG:
             response = chain.invoke({"question": last_message}) or "I'm not sure about that."
             return {"messages": [HumanMessage(content=response)]}
 
+    def _check_and_fetch(self, state: AgentState):
+        print("--- CHECK AND FETCH ---")
+        query = state["messages"][0].content
+        source = state.get("source", "amazon")
+        self.ingestion_pipeline.check_and_fetch(query, source)
+        return {}
+
     async def _vector_retriever(self, state: AgentState):
         print("--- RETRIEVER (MCP) ---")
         query = state["messages"][-1].content
@@ -92,7 +102,7 @@ class AgenticRAG:
         print("--- WEB SEARCH (MCP) ---")
         query = state["messages"][-1].content
         tool = next(t for t in self.mcp_tools if t.name == "web_search")
-        result = await tool.ainvoke({"query": query})  # ✅
+        result = await tool.ainvoke({"query": query})
         context = result if result else "No data from web"
         return {"messages": [HumanMessage(content=context)]}
 
@@ -149,6 +159,7 @@ class AgenticRAG:
     def _build_workflow(self):
         workflow = StateGraph(self.AgentState)
         workflow.add_node("Assistant", self._ai_assistant)
+        workflow.add_node("CheckAndFetch", self._check_and_fetch)
         workflow.add_node("Retriever", self._vector_retriever)
         workflow.add_node("Generator", self._generate)
         workflow.add_node("Rewriter", self._rewrite)
@@ -158,9 +169,10 @@ class AgenticRAG:
         workflow.add_edge(START, "Assistant")
         workflow.add_conditional_edges(
             "Assistant",
-            lambda state: "Retriever" if "TOOL" in state["messages"][-1].content else END,
-            {"Retriever": "Retriever", END: END},
+            lambda state: "CheckAndFetch" if "TOOL" in state["messages"][-1].content else END,
+            {"CheckAndFetch": "CheckAndFetch", END: END},
         )
+        workflow.add_edge("CheckAndFetch", "Retriever")
         workflow.add_conditional_edges(
             "Retriever",
             self._grade_documents,
@@ -173,10 +185,10 @@ class AgenticRAG:
         return workflow
 
     # ---------- Public Run ----------
-    async def run(self, query: str, thread_id: str = "default_thread") -> str:
+    async def run(self, query: str, source: str = "amazon", thread_id: str = "default_thread") -> str:
         """Run the workflow for a given query and return the final answer."""
         result = await self.app.ainvoke(
-            {"messages": [HumanMessage(content=query)]},
+            {"messages": [HumanMessage(content=query)], "source": source},
             config={"configurable": {"thread_id": thread_id}}
         )
         return result["messages"][-1].content
