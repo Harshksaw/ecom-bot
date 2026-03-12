@@ -28,12 +28,47 @@ if prompt := st.chat_input("What product are you looking for?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        with st.spinner("Agent is reasoning..."):
+        status_placeholder = st.empty()
+        with status_placeholder.status("Agent is working...", expanded=True) as status:
             try:
-                # Async run
-                response = asyncio.run(st.session_state.rag_agent.run(prompt))
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
+                # We need an async wrapper to run the stream generator
+                async def process_stream():
+                    full_response = ""
+                    async for event in st.session_state.rag_agent.run_stream(prompt):
+                        kind = event["event"]
+                        
+                        if kind == "on_chat_model_stream":
+                            content = event["data"]["chunk"].content
+                            if getattr(event["data"]["chunk"], "tool_calls", None):
+                                # Skip streaming if it's formulating a tool call instead of text
+                                pass
+                            elif isinstance(content, str):
+                                full_response += content
+                                
+                        elif kind == "on_tool_start":
+                            tool_name = event["name"]
+                            if tool_name == "search_amazon":
+                                status.update(label=f"🔍 Searching Amazon live for '{event['data'].get('input', {}).get('query', '')}'...", state="running")
+                                status.write(f"Calling tool `{tool_name}`...")
+                            elif tool_name == "get_product_reviews":
+                                status.update(label=f"📖 Reading live reviews for ASIN {event['data'].get('input', {}).get('asin', '')}...", state="running")
+                                status.write(f"Calling tool `{tool_name}`...")
+                            elif tool_name == "astradb_search":
+                                status.update(label=f"🗄️ Checking local cache...", state="running")
+                                status.write(f"Calling tool `{tool_name}`...")
+                                
+                        elif kind == "on_tool_end":
+                            tool_name = event["name"]
+                            status.write(f"✅ Finished tool: {tool_name}")
+                            
+                    status.update(label="Done processing!", state="complete")
+                    return full_response
+
+                final_text = asyncio.run(process_stream())
+                st.markdown(final_text)
+                st.session_state.messages.append({"role": "assistant", "content": final_text})
+                
             except Exception as e:
+                status.update(label="Error!", state="error")
                 st.error("❌ I encountered an error executing the agent!")
                 st.exception(e)

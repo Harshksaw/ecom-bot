@@ -7,7 +7,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
-from langchain_mcp_adapters import MCPAdapter
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_astradb import AstraDBVectorStore
 
 from prod_assistant.utils.model_loader import ModelLoader
@@ -57,18 +57,20 @@ class AgenticRAG:
             except Exception as e:
                 return f"Error searching cache: {e}"
 
-        # 2. Connect to RapidAPI MCP
-        rapidapi_key = os.getenv("RAPIDAPI_KEY", "")
-        self.rapidapi_adapter = MCPAdapter(
-            server_url="https://mcp.rapidapi.com",
-            transport_type="streamable_http",
-            headers={"X-RapidAPI-Key": rapidapi_key}
+        # 2. Connect to Local Amazon MCP Server
+        self.mcp_client = MultiServerMCPClient(
+            {
+                "amazon_scraper": {
+                    "command": "env/bin/python",
+                    "args": ["/mnt/data/AIProjects/ecom-bot/amazon_mcp_server/server.py"],
+                    "transport": "stdio",
+                }
+            }
         )
         
         try:
-            await self.rapidapi_adapter.connect()
-            mcp_tools = await self.rapidapi_adapter.get_tools()
-            print("✅ RapidAPI MCP tools loaded successfully.")
+            mcp_tools = await self.mcp_client.get_tools()
+            print("✅ Amazon MCP tools loaded successfully.")
         except Exception as e:
             print(f"Warning: Failed to load MCP tools — {e}")
             mcp_tools = []
@@ -76,6 +78,18 @@ class AgenticRAG:
         # 3. Combine tools and build the React Agent
         self.tools = [astradb_search] + mcp_tools
         self.app = create_react_agent(self.llm, self.tools, checkpointer=self.checkpointer)
+
+    async def run_stream(self, query: str, thread_id: str = "default_thread", **kwargs):
+        """Run the workflow and yield events for live streaming."""
+        if not self.app:
+            await self.async_init()
+            
+        async for event in self.app.astream_events(
+            {"messages": [HumanMessage(content=query)]},
+            version="v2",
+            config={"configurable": {"thread_id": thread_id}}
+        ):
+            yield event
 
     async def run(self, query: str, thread_id: str = "default_thread", **kwargs) -> str:
         """Run the workflow for a given query and return the final answer."""
