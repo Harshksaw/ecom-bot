@@ -45,3 +45,13 @@ spec:
             secretKeyRef:
               name: product-assistant-secrets
               key: ASTRA_DB_KEYSPACE
+        - name: RAPIDAPI_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-assistant-secrets
+              key: RAPIDAPI_KEY
+        - name: BESTBUY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-assistant-secrets
+              key: BESTBUY_API_KEY

@@ -8,23 +8,35 @@ embedding_model:
 retriever:
   top_k: 4
 
-  llm:
-    groq:
-      provider: "groq"
-      model_name: "qwen/qwen-3-32b"       # replaces llama-3.3-70b
-      temperature: 0
-      max_output_tokens: 2048
+api_fetcher:
+  max_products: 5
+  max_reviews_per_product: 3
+  min_results_threshold: 1
+  amazon:
+    host: "real-time-amazon-data.p.rapidapi.com"
+    search_url: "https://real-time-amazon-data.p.rapidapi.com/search"
+    reviews_url: "https://real-time-amazon-data.p.rapidapi.com/product-reviews"
+    country: "US"
+  bestbuy:
+    host: "axesso-best-buy-data-service.p.rapidapi.com"
+    search_url: "https://axesso-best-buy-data-service.p.rapidapi.com/bby/search"
+    reviews_url: "https://axesso-best-buy-data-service.p.rapidapi.com/bby/product-reviews"
 
-    google:
-      provider: "google"
-      model_name: "gemini-2.5-flash"
-      temperature: 0
-      max_output_tokens: 2048
+llm:
+  groq:
+    provider: "groq"
+    model_name: "qwen/qwen-3-32b"       # replaces llama-3.3-70b
+    temperature: 0
+    max_output_tokens: 2048
 
-    openai:
-      provider: "openai"
-      model_name: "gpt-4o-mini"
-      temperature: 0
-      max_output_tokens: 2048
+  google:
+    provider: "google"
+    model_name: "gemini-2.5-flash"
+    temperature: 0
+    max_output_tokens: 2048
 
-
+  openai:
+    provider: "openai"
+    model_name: "gpt-4o-mini"
+    temperature: 0
+    max_output_tokens: 2048

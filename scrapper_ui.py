@@ -1,63 +1,74 @@
-
 import streamlit as st
-from prod_assistant.etl.data_ingestion import DataIngestion
-from prod_assistant.etl.data_scrapper import BooksToScrapeScraper
-import os
+import asyncio
+from prod_assistant.workflow.agentic_workflow_with_mcp_websearch import AgenticRAG
 
-scraper = BooksToScrapeScraper()
-output_path = "data/product_reviews.csv"
+st.set_page_config(page_title="E-Com AI Assistant", page_icon="🛍️")
 
-st.title("📚 Books to Scrape (Educational)")
-st.info("ℹ️ Scraping from **books.toscrape.com** - a safe sandbox for testing.")
+st.title("🛍️ E-Com AI Assistant")
+st.info("ℹ️ Powered by LangGraph ReAct agent and RapidAPI's MCP Server. I dynamically check local AstraDB cache or fetch live data!")
 
-# Fetch categories on load
-if "categories" not in st.session_state:
-    with st.spinner("Fetching categories..."):
-        cats = scraper.get_categories()
-        st.session_state.categories = [c["name"] for c in cats]
+# Initialize the RAG Agent in session state
+if "rag_agent" not in st.session_state:
+    st.session_state.rag_agent = AgenticRAG()
 
-selected_category = st.selectbox(
-    "Select a Category to Scrape", 
-    ["All"] + st.session_state.categories if "categories" in st.session_state else []
-)
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-max_books = st.slider("How many books to scrape?", min_value=1, max_value=50, value=5)
+# Display chat messages from history on app rerun
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if st.button("🚀 Start Scraping"):
-    if not selected_category:
-        st.warning("⚠️ Please select a category.")
-    else:
-        st.write(f"🔍 Scraping category: **{selected_category}**")
-        
-        # Scraper callback to update UI
+# React to user input
+if prompt := st.chat_input("What product are you looking for?"):
+    # Display user message in chat message container
+    st.chat_message("user").markdown(prompt)
+    # Add user message to chat history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant"):
         status_placeholder = st.empty()
-        def status_callback(msg, _):
-            status_placeholder.info(msg)
-            
-        if selected_category == "All":
-             # iterating all categories logic would go here, for now just show warning
-             st.warning("All categories scraping not fully implemented in UI demo. Please pick a specific category.")
-             books = []
-        else:
-            books = scraper.scrape_category(selected_category, max_books=max_books, status_callback=status_callback)
-        
-        if books:
-            scraper.save_to_csv(books, output_path)
-            st.session_state["scraped_data"] = books
-            
-            st.success(f"✅ Scraped {len(books)} books!")
-            st.dataframe(books)
-            st.download_button("📥 Download CSV", data=open(output_path, "rb"), file_name="books_data.csv")
-        else:
-            st.error("❌ No books found or error occurred.")
+        with status_placeholder.status("Agent is working...", expanded=True) as status:
+            try:
+                # We need an async wrapper to run the stream generator
+                async def process_stream():
+                    full_response = ""
+                    async for event in st.session_state.rag_agent.run_stream(prompt):
+                        kind = event["event"]
+                        
+                        if kind == "on_chat_model_stream":
+                            content = event["data"]["chunk"].content
+                            if getattr(event["data"]["chunk"], "tool_calls", None):
+                                # Skip streaming if it's formulating a tool call instead of text
+                                pass
+                            elif isinstance(content, str):
+                                full_response += content
+                                
+                        elif kind == "on_tool_start":
+                            tool_name = event["name"]
+                            if tool_name == "search_amazon":
+                                status.update(label=f"🔍 Searching Amazon live for '{event['data'].get('input', {}).get('query', '')}'...", state="running")
+                                status.write(f"Calling tool `{tool_name}`...")
+                            elif tool_name == "get_product_reviews":
+                                status.update(label=f"📖 Reading live reviews for ASIN {event['data'].get('input', {}).get('asin', '')}...", state="running")
+                                status.write(f"Calling tool `{tool_name}`...")
+                            elif tool_name == "astradb_search":
+                                status.update(label=f"🗄️ Checking local cache...", state="running")
+                                status.write(f"Calling tool `{tool_name}`...")
+                                
+                        elif kind == "on_tool_end":
+                            tool_name = event["name"]
+                            status.write(f"✅ Finished tool: {tool_name}")
+                            
+                    status.update(label="Done processing!", state="complete")
+                    return full_response
 
-if "scraped_data" in st.session_state and st.button("🧠 Store in Vector DB (AstraDB)"):
-    with st.spinner("📡 Initializing ingestion pipeline..."):
-        try:
-            ingestion = DataIngestion()
-            st.info("🚀 Running ingestion pipeline...")
-            ingestion.run_pipeline()
-            st.success("✅ Data successfully ingested to AstraDB!")
-        except Exception as e:
-            st.error("❌ Ingestion failed!")
-            st.exception(e)
+                final_text = asyncio.run(process_stream())
+                st.markdown(final_text)
+                st.session_state.messages.append({"role": "assistant", "content": final_text})
+                
+            except Exception as e:
+                status.update(label="Error!", state="error")
+                st.error("❌ I encountered an error executing the agent!")
+                st.exception(e)
